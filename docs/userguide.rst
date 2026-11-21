@@ -283,6 +283,17 @@ acquires jobs, the data store discards any jobs that have passed their start dea
 (scheduled time + ``misfire_grace_time``). Such jobs are released with the outcome of
 :attr:`~JobOutcome.missed_start_deadline`.
 
+When a scheduler starts, it catches up on schedule run times that were missed while it
+was down, but only within the scheduler's ``max_catch_up_time`` setting (one day by
+default). The schedule's coalesce policy still controls how many jobs are created for
+a schedule with several missed run times. Run times older than the catch-up window are
+discarded and a warning is logged.
+
+Jobs created for recent missed run times get their start deadline recalculated from
+the time the scheduler processed them, so a short ``misfire_grace_time`` does not cause
+the entire catch-up batch to be discarded again. Setting ``misfire_grace_time`` to zero
+keeps the old behavior of not tolerating a late start.
+
 Adding custom metadata
 ----------------------
 

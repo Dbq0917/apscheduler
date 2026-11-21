@@ -24,7 +24,7 @@ from anyio import (
     sleep,
 )
 from anyio.abc import TaskGroup, TaskStatus
-from attr.validators import instance_of, optional
+from attr.validators import and_, ge, instance_of, optional
 
 from .. import JobAdded, SerializationError, TaskLookupError
 from .._context import current_async_scheduler, current_job
@@ -99,6 +99,9 @@ class AsyncScheduler:
         calls to :meth:`cleanup` – ``None`` to disable automatic clean-up
     :param lease_duration: maximum amount of time (as seconds or timedelta) that
         the scheduler can keep a lock on a schedule or task
+    :param max_catch_up_time: maximum amount of time (as seconds or timedelta) to
+        look back for missed schedule run times when the scheduler starts; older
+        run times are discarded
     :param logger: the logger instance used to log events from the scheduler, data store
         and event broker
     """
@@ -127,6 +130,12 @@ class AsyncScheduler:
         default=timedelta(minutes=15),
     )
     lease_duration: timedelta = attrs.field(converter=as_timedelta, default=30)
+    max_catch_up_time: timedelta = attrs.field(
+        kw_only=True,
+        converter=as_timedelta,
+        validator=and_(instance_of(timedelta), ge(timedelta())),
+        default=timedelta(days=1),
+    )
     logger: Logger = attrs.field(kw_only=True, default=getLogger(__name__))
 
     _state: RunState = attrs.field(init=False, default=RunState.stopped)
@@ -948,6 +957,7 @@ class AsyncScheduler:
             # Signal that we are ready, and wait for the scheduler start event
             task_status.started()
             await self.get_next_event(SchedulerStarted)
+            scheduler_start_time = datetime.now(UTC)
 
             while self._state is RunState.started:
                 schedules = await self.data_store.acquire_schedules(
@@ -965,13 +975,34 @@ class AsyncScheduler:
                     exit_stack.callback(tg.cancel_scope.cancel)
 
                     now = datetime.now(UTC)
+                    catch_up_cutoff = now - self.max_catch_up_time
                     results: list[ScheduleResult] = []
                     for schedule in schedules:
                         # Calculate a next fire time for the schedule, if possible
-                        fire_times = [schedule.next_fire_time]
+                        fire_times: list[datetime] = []
                         next_fire_time: datetime | None = None
+                        fire_time = schedule.next_fire_time
+                        last_fire_time = fire_time
+                        skipped_fire_times = 0
                         calculate_next = schedule.trigger.next
-                        while True:
+                        while fire_time is not None:
+                            if fire_time > now:
+                                next_fire_time = fire_time
+                                break
+
+                            last_fire_time = fire_time
+                            if fire_time < catch_up_cutoff:
+                                skipped_fire_times += 1
+                            elif schedule.coalesce is CoalescePolicy.all:
+                                fire_times.append(fire_time)
+                            elif schedule.coalesce is CoalescePolicy.latest:
+                                if fire_times:
+                                    fire_times[0] = fire_time
+                                else:
+                                    fire_times.append(fire_time)
+                            elif not fire_times:
+                                fire_times.append(fire_time)
+
                             try:
                                 fire_time = calculate_next()
                             except Exception:
@@ -981,18 +1012,32 @@ class AsyncScheduler:
                                     schedule.id,
                                     schedule.task_id,
                                 )
+                                next_fire_time = None
                                 break
 
-                            # Stop if the calculated fire time is in the future
-                            if fire_time is None or fire_time > now:
-                                next_fire_time = fire_time
+                            if fire_time is None:
+                                next_fire_time = None
                                 break
 
-                            # Only keep all the fire times if coalesce policy = "all"
-                            if schedule.coalesce is CoalescePolicy.all:
-                                fire_times.append(fire_time)
-                            elif schedule.coalesce is CoalescePolicy.latest:
-                                fire_times[0] = fire_time
+                        assert last_fire_time is not None
+                        if skipped_fire_times:
+                            self.logger.warning(
+                                "Discarded %d missed run(s) of schedule %r because "
+                                "they were older than the maximum catch-up time (%s)",
+                                skipped_fire_times,
+                                schedule.id,
+                                self.max_catch_up_time,
+                            )
+
+                        caught_up_fire_times = sum(
+                            fire_time < scheduler_start_time for fire_time in fire_times
+                        )
+                        if caught_up_fire_times:
+                            self.logger.info(
+                                "Caught up %d missed run(s) of schedule %r",
+                                caught_up_fire_times,
+                                schedule.id,
+                            )
 
                         # Add one or more jobs to the job queue
                         max_jitter = (
@@ -1032,6 +1077,15 @@ class AsyncScheduler:
                                 start_deadline: datetime | None = None
                             else:
                                 start_deadline = fire_time + schedule.misfire_grace_time
+                                if (
+                                    schedule.misfire_grace_time > _zero_timedelta
+                                    and fire_time < scheduler_start_time
+                                    and start_deadline < now
+                                ):
+                                    start_deadline = now + max(
+                                        schedule.misfire_grace_time,
+                                        self.max_catch_up_time,
+                                    )
 
                             job = Job(
                                 task_id=schedule.task_id,
@@ -1052,7 +1106,7 @@ class AsyncScheduler:
                                 schedule_id=schedule.id,
                                 task_id=schedule.task_id,
                                 trigger=schedule.trigger,
-                                last_fire_time=fire_times[-1],
+                                last_fire_time=last_fire_time,
                                 next_fire_time=next_fire_time,
                             )
                         )

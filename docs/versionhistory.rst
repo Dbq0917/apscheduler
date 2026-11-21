@@ -6,6 +6,9 @@ APScheduler, see the :doc:`migration section <migration>`.
 
 **UNRELEASED**
 
+- Fixed missed schedule run times being discarded after a scheduler restart when their
+  original start deadline had already passed; recent run times are now caught up, while
+  run times older than the new ``max_catch_up_time`` scheduler setting are discarded
 - **BREAKING** Switched the MongoDB data store to use the asynchronous API in
   ``pymongo`` and bumped the minimum ``pymongo`` version to v4.13.0
 - Bumped up the CBOR serializer's ``cbor2`` dependency to v6.0+

@@ -157,6 +157,7 @@ class TestAsyncScheduler:
                 scheduler.job_executors["processpool"], ProcessPoolJobExecutor
             )
             assert scheduler.task_defaults.job_executor == "async"
+            assert scheduler.max_catch_up_time == timedelta(days=1)
             assert scheduler.state is RunState.stopped
 
     async def test_subscribe_coroutine_function(self) -> None:
@@ -566,6 +567,62 @@ class TestAsyncScheduler:
             # There should be no more events on the list
             with pytest.raises(WouldBlock):
                 scheduler_receive.receive_nowait()
+
+    async def test_missed_run_caught_up_after_restart(
+        self, raw_datastore: DataStore
+    ) -> None:
+        now = datetime.now(UTC)
+        send, receive = create_memory_object_stream[Event](1)
+        with send, receive:
+            async with AsyncScheduler(
+                data_store=raw_datastore,
+                max_catch_up_time=timedelta(minutes=1),
+            ) as scheduler:
+                await scheduler.add_schedule(
+                    dummy_async_job,
+                    DateTrigger(now - timedelta(seconds=30)),
+                    misfire_grace_time=1,
+                    id="foo",
+                )
+                scheduler.subscribe(send.send, {JobReleased})
+                await scheduler.start_in_background()
+
+                with fail_after(3):
+                    event = await receive.receive()
+
+                assert isinstance(event, JobReleased)
+                assert event.schedule_id == "foo"
+                assert event.started_at is not None
+                assert event.outcome is JobOutcome.success
+
+    async def test_missed_run_older_than_catch_up_time_is_discarded(
+        self, raw_datastore: DataStore
+    ) -> None:
+        now = datetime.now(UTC)
+        send, receive = create_memory_object_stream[Event](1)
+        with send, receive:
+            async with AsyncScheduler(
+                data_store=raw_datastore,
+                role=SchedulerRole.scheduler,
+                cleanup_interval=None,
+                max_catch_up_time=timedelta(minutes=1),
+            ) as scheduler:
+                await scheduler.add_schedule(
+                    dummy_async_job,
+                    DateTrigger(now - timedelta(days=7)),
+                    misfire_grace_time=1,
+                    id="foo",
+                )
+                scheduler.subscribe(send.send, {ScheduleUpdated})
+                await scheduler.start_in_background()
+
+                with fail_after(3):
+                    event = await receive.receive()
+
+                assert isinstance(event, ScheduleUpdated)
+                assert event.schedule_id == "foo"
+                assert event.next_fire_time is None
+                assert await scheduler.get_jobs() == []
 
     @pytest.mark.parametrize(
         "coalesce, expected_jobs, first_fire_time_delta",
