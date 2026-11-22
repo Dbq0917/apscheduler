@@ -376,8 +376,8 @@ def test_week_2(timezone, serializer, weekday):
             {"minute": "*/30"},
             datetime(2013, 11, 3, 1, 35),
             0,
-            datetime(2013, 11, 3, 1),
-            1,
+            datetime(2013, 11, 3, 2),
+            0,
         ),
     ],
     ids=[
@@ -421,7 +421,6 @@ def test_dst_change(
             datetime(2024, 10, 27, 2, 0, 0, 0),
             [
                 (datetime(2024, 10, 27, 2, 0, 0, 0), 0),
-                (datetime(2024, 10, 27, 2, 0, 0, 0), 1),
                 (datetime(2024, 10, 27, 3, 0, 0, 0), 0),
             ],
         ),
@@ -430,7 +429,6 @@ def test_dst_change(
             datetime(2024, 10, 27, 2, 1, 0, 0),
             [
                 (datetime(2024, 10, 27, 2, 1, 0, 0), 0),
-                (datetime(2024, 10, 27, 2, 1, 0, 0), 1),
                 (datetime(2024, 10, 27, 3, 1, 0, 0), 0),
             ],
         ),
@@ -450,6 +448,47 @@ def test_dst_change2(
         next_date = trigger.next()
         assert next_date == correct_next_date
         assert str(next_date) == str(correct_next_date)
+
+
+@pytest.mark.parametrize(
+    "zone, hour, first, second, third",
+    [
+        (
+            "Europe/Berlin",
+            2,
+            "2024-10-26T02:30:00+02:00",
+            "2024-10-27T02:30:00+02:00",
+            "2024-10-28T02:30:00+01:00",
+        ),
+        (
+            "America/New_York",
+            1,
+            "2024-11-02T01:30:00-04:00",
+            "2024-11-03T01:30:00-04:00",
+            "2024-11-04T01:30:00-05:00",
+        ),
+        (
+            "Asia/Shanghai",
+            2,
+            "2024-10-26T02:30:00+08:00",
+            "2024-10-27T02:30:00+08:00",
+            "2024-10-28T02:30:00+08:00",
+        ),
+    ],
+    ids=["europe", "north-america", "no-dst"],
+)
+def test_dst_fall_back_runs_once_per_day(zone, hour, first, second, third):
+    timezone = ZoneInfo(zone)
+    trigger = CronTrigger(
+        hour=hour,
+        minute=30,
+        start_time=datetime.fromisoformat(first),
+        timezone=timezone,
+    )
+
+    assert trigger.next().isoformat() == first
+    assert trigger.next().isoformat() == second
+    assert trigger.next().isoformat() == third
 
 
 def test_zero_value(timezone):

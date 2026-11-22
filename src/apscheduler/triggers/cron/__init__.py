@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, tzinfo
+from datetime import datetime, timedelta, tzinfo
 from typing import Any, ClassVar
 
 import attrs
@@ -43,6 +43,9 @@ class CronTrigger(Trigger):
         (defaults to the local timezone)
 
     .. note:: The first weekday is always **monday**.
+
+    .. note:: If a scheduled wall time occurs twice due to a backward DST shift, the
+        trigger fires only at its first occurrence.
     """
 
     FIELDS_MAP: ClassVar[list[tuple[str, type[BaseField]]]] = [
@@ -205,9 +208,29 @@ class CronTrigger(Trigger):
                     i += 1
 
         difference = datetime(**values) - dateval.replace(tzinfo=None)
-        dateval = datetime.fromtimestamp(
-            dateval.timestamp() + difference.total_seconds(), self.timezone
-        )
+        target = datetime(**values, tzinfo=self.timezone)
+        if time_exists(target):
+            if target.timestamp() <= dateval.timestamp():
+                # During a backward DST shift, the same wall time occurs twice. Advance
+                # through the second occurrence if the first one is not in the future.
+                second_occurrence = target.replace(fold=1)
+                if (
+                    time_exists(second_occurrence)
+                    and second_occurrence.timestamp() > dateval.timestamp()
+                ):
+                    target = second_occurrence
+                else:
+                    target = datetime.fromtimestamp(
+                        dateval.timestamp() + difference.total_seconds(),
+                        self.timezone,
+                    )
+
+            dateval = target
+        else:
+            dateval = datetime.fromtimestamp(
+                dateval.timestamp() + difference.total_seconds(), self.timezone
+            )
+
         return dateval, fieldnum
 
     def _set_field_value(
@@ -227,9 +250,20 @@ class CronTrigger(Trigger):
 
     def next(self) -> datetime | None:
         if self._last_fire_time:
-            next_time = datetime.fromtimestamp(
-                self._last_fire_time.timestamp() + 1, self.timezone
-            )
+            if self._last_fire_time.fold == 0:
+                # Advance the wall clock instead of the elapsed time so that a backward
+                # DST shift cannot make the search return the same wall time again.
+                next_time = (
+                    self._last_fire_time.replace(tzinfo=None) + timedelta(seconds=1)
+                ).replace(tzinfo=self.timezone)
+                if not time_exists(next_time):
+                    next_time = datetime.fromtimestamp(
+                        next_time.timestamp(), self.timezone
+                    )
+            else:
+                next_time = datetime.fromtimestamp(
+                    self._last_fire_time.timestamp() + 1, self.timezone
+                )
         else:
             next_time = self.start_time
 
