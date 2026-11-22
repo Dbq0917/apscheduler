@@ -19,6 +19,7 @@ from anyio import (
     TASK_STATUS_IGNORED,
     CancelScope,
     create_task_group,
+    current_time,
     get_cancelled_exc_class,
     move_on_after,
     sleep,
@@ -46,6 +47,7 @@ from .._exceptions import (
     JobCancelled,
     JobDeadlineMissed,
     JobLookupError,
+    JobTimedOutError,
     ScheduleLookupError,
 )
 from .._marshalling import callable_from_ref, callable_to_ref
@@ -162,6 +164,9 @@ class AsyncScheduler:
 
         if self.task_defaults.misfire_grace_time is unset:
             self.task_defaults.misfire_grace_time = None
+
+        if self.task_defaults.timeout is unset:
+            self.task_defaults.timeout = None
 
     async def __aenter__(self) -> Self:
         async with AsyncExitStack() as exit_stack:
@@ -311,6 +316,7 @@ class AsyncScheduler:
         job_executor: str | UnsetValue = unset,
         misfire_grace_time: float | timedelta | None | UnsetValue = unset,
         max_running_jobs: int | None | UnsetValue = unset,
+        timeout: float | timedelta | None | UnsetValue = unset,  # noqa: ASYNC109
         metadata: MetadataType | UnsetValue = unset,
     ) -> Task:
         """
@@ -322,6 +328,7 @@ class AsyncScheduler:
         * ``job_executor``: the value of ``default_job_executor`` scheduler attribute
         * ``misfire_grace_time``: ``None``
         * ``max_running_jobs``: 1
+        * ``timeout``: ``None``
 
         When updating a task, any options not explicitly passed will remain the same.
 
@@ -336,6 +343,8 @@ class AsyncScheduler:
             run time is allowed to be late, compared to the scheduled run time
         :param max_running_jobs: maximum number of instances of the task that are
             allowed to run concurrently
+        :param timeout: maximum number of seconds a job created for this task is
+            allowed to run
         :param metadata: key-value pairs for storing JSON compatible custom information
         :raises TypeError: if ``func_or_task_id`` is neither a task, task ID or a
             callable
@@ -358,6 +367,7 @@ class AsyncScheduler:
                 job_executor=func_or_task_id.job_executor,
                 max_running_jobs=func_or_task_id.max_running_jobs,
                 misfire_grace_time=func_or_task_id.misfire_grace_time,
+                timeout=func_or_task_id.timeout,
                 metadata=func_or_task_id.metadata,
             )
         elif isinstance(func_or_task_id, str) and func_or_task_id:
@@ -368,6 +378,7 @@ class AsyncScheduler:
                     job_executor=task.job_executor,
                     max_running_jobs=task.max_running_jobs,
                     misfire_grace_time=task.misfire_grace_time,
+                    timeout=task.timeout,
                     metadata=task.metadata,
                 )
             except TaskLookupError:
@@ -389,6 +400,8 @@ class AsyncScheduler:
             task_params.max_running_jobs = max_running_jobs
         if misfire_grace_time is not unset:
             task_params.misfire_grace_time = misfire_grace_time
+        if timeout is not unset:
+            task_params.timeout = timeout
 
         # Fill in unset values with the defaults
         if task_params.job_executor is unset:
@@ -397,6 +410,8 @@ class AsyncScheduler:
             task_params.max_running_jobs = self.task_defaults.max_running_jobs
         if task_params.misfire_grace_time is unset:
             task_params.misfire_grace_time = self.task_defaults.misfire_grace_time
+        if task_params.timeout is unset:
+            task_params.timeout = self.task_defaults.timeout
 
         # Merge the metadata from the defaults, task definition and explicitly passed
         # metadata
@@ -421,6 +436,7 @@ class AsyncScheduler:
                 job_executor=task_params.job_executor,
                 max_running_jobs=task_params.max_running_jobs,
                 misfire_grace_time=task_params.misfire_grace_time,
+                timeout=task_params.timeout,
                 metadata=task_params.metadata,
             )
             modified = True
@@ -437,6 +453,9 @@ class AsyncScheduler:
 
             if task_params.misfire_grace_time != task.misfire_grace_time:
                 changes["misfire_grace_time"] = task_params.misfire_grace_time
+
+            if task_params.timeout != task.timeout:
+                changes["timeout"] = task_params.timeout
 
             if task_params.metadata != task.metadata:
                 changes["metadata"] = task_params.metadata
@@ -472,6 +491,7 @@ class AsyncScheduler:
         coalesce: CoalescePolicy = CoalescePolicy.latest,
         job_executor: str | UnsetValue = unset,
         misfire_grace_time: float | timedelta | None | UnsetValue = unset,
+        timeout: float | timedelta | None | UnsetValue = unset,  # noqa: ASYNC109
         metadata: MetadataType | UnsetValue = unset,
         max_jitter: float | timedelta | None = None,
         job_result_expiration_time: float | timedelta = 0,
@@ -494,6 +514,8 @@ class AsyncScheduler:
             fire times have become due for this schedule since the last processing
         :param misfire_grace_time: maximum number of seconds the scheduled job's actual
             run time is allowed to be late, compared to the scheduled run time
+        :param timeout: maximum number of seconds jobs created from this schedule are
+            allowed to run
         :param metadata: key-value pairs for storing JSON compatible custom information
         :param max_jitter: maximum time (in seconds, or as a timedelta) to randomly add
             to the scheduled time for each job created from this schedule
@@ -541,6 +563,7 @@ class AsyncScheduler:
             misfire_grace_time=task.misfire_grace_time
             if misfire_grace_time is unset
             else misfire_grace_time,
+            timeout=task.timeout if timeout is unset else timeout,
             metadata=task.metadata.copy()
             if metadata is unset
             else merge_metadata(task.metadata, metadata),
@@ -652,6 +675,7 @@ class AsyncScheduler:
         args: Iterable[Any] | None = None,
         kwargs: Mapping[str, Any] | None = None,
         job_executor: str | UnsetValue = unset,
+        timeout: float | timedelta | None | UnsetValue = unset,  # noqa: ASYNC109
         metadata: MetadataType | UnsetValue = unset,
         result_expiration_time: timedelta | float = 0,
     ) -> UUID:
@@ -666,6 +690,8 @@ class AsyncScheduler:
         :param kwargs: keyword arguments to call the target callable with
         :param job_executor: name of the job executor to run the task with
             (overrides the executor in the task definition, if any)
+        :param timeout: maximum number of seconds the job is allowed to run
+            (overrides the timeout in the task definition)
         :param metadata: key-value pairs for storing JSON compatible custom information
         :param result_expiration_time: the minimum time (as seconds, or timedelta) to
             keep the result of the job available for fetching (the result won't be
@@ -703,6 +729,7 @@ class AsyncScheduler:
             args=args or (),
             kwargs=kwargs or {},
             executor=task.job_executor if job_executor is unset else job_executor,
+            timeout=task.timeout if timeout is unset else timeout,
             result_expiration_time=result_expiration_time,
             metadata=merge_metadata(task.metadata, metadata),
         )
@@ -757,6 +784,7 @@ class AsyncScheduler:
         args: Iterable[Any] | None = None,
         kwargs: Mapping[str, Any] | None = None,
         job_executor: str | UnsetValue = unset,
+        timeout: float | timedelta | None | UnsetValue = unset,  # noqa: ASYNC109
         metadata: MetadataType | UnsetValue = unset,
     ) -> Any:
         """
@@ -770,6 +798,8 @@ class AsyncScheduler:
         :param kwargs: keyword arguments to be passed to the task function
         :param job_executor: name of the job executor to run the task with
             (overrides the executor in the task definition, if any)
+        :param timeout: maximum number of seconds the job is allowed to run
+            (overrides the timeout in the task definition)
         :param metadata: key-value pairs for storing JSON compatible custom information
         :returns: the return value of the task function
 
@@ -788,6 +818,7 @@ class AsyncScheduler:
                 args=args,
                 kwargs=kwargs,
                 job_executor=job_executor,
+                timeout=timeout,
                 metadata=metadata,
                 result_expiration_time=timedelta(minutes=15),
             )
@@ -809,6 +840,8 @@ class AsyncScheduler:
             raise JobDeadlineMissed
         elif result.outcome is JobOutcome.cancelled:
             raise JobCancelled
+        elif result.outcome is JobOutcome.timeout:
+            raise JobTimedOutError
         else:
             raise RuntimeError(f"Unknown job outcome: {result.outcome}")
 
@@ -1042,6 +1075,7 @@ class AsyncScheduler:
                                 jitter=jitter,
                                 start_deadline=start_deadline,
                                 executor=schedule.job_executor,
+                                timeout=schedule.timeout,
                                 result_expiration_time=schedule.job_result_expiration_time,
                                 metadata=schedule.metadata.copy(),
                             )
@@ -1171,6 +1205,12 @@ class AsyncScheduler:
                 await wakeup_event.wait()
                 wakeup_event = anyio.Event()
 
+    async def _release_job_result(self, job: Job, result: JobResult) -> None:
+        # Finalization must not be interrupted by a timeout or scheduler shutdown, or
+        # the job could be left acquired and its result only partially committed.
+        with CancelScope(shield=True):
+            await self.data_store.release_job(self.identity, job, result)
+
     async def _run_job(self, job: Job, func: Callable[..., Any], executor: str) -> None:
         try:
             # Check if the job started before the deadline
@@ -1179,7 +1219,7 @@ class AsyncScheduler:
                 result = JobResult.from_job(
                     job, JobOutcome.missed_start_deadline, finished_at=start_time
                 )
-                await self.data_store.release_job(self.identity, job, result)
+                await self._release_job_result(job, result)
                 return
 
             try:
@@ -1189,14 +1229,31 @@ class AsyncScheduler:
 
             token = current_job.set(job)
             try:
-                retval = await job_executor.run_job(func, job)
+                timed_out = False
+                if job.timeout is not None:
+                    with CancelScope(
+                        deadline=current_time() + job.timeout.total_seconds()
+                    ) as timeout_scope:
+                        retval = await job_executor.run_job(func, job)
+
+                    timed_out = timeout_scope.cancel_called
+                else:
+                    retval = await job_executor.run_job(func, job)
+
+                if timed_out:
+                    raise JobTimedOutError
+            except JobTimedOutError:
+                self.logger.info("Job %s timed out", job.id)
+                result = JobResult.from_job(
+                    job, JobOutcome.timeout, started_at=start_time
+                )
+                await self._release_job_result(job, result)
             except get_cancelled_exc_class():
                 self.logger.info("Job %s was cancelled", job.id)
-                with CancelScope(shield=True):
-                    result = JobResult.from_job(
-                        job, JobOutcome.cancelled, started_at=start_time
-                    )
-                    await self.data_store.release_job(self.identity, job, result)
+                result = JobResult.from_job(
+                    job, JobOutcome.cancelled, started_at=start_time
+                )
+                await self._release_job_result(job, result)
             except BaseException as exc:
                 if isinstance(exc, Exception):
                     self.logger.exception("Job %s raised an exception", job.id)
@@ -1211,7 +1268,7 @@ class AsyncScheduler:
                     started_at=start_time,
                     exception=exc,
                 )
-                await self.data_store.release_job(self.identity, job, result)
+                await self._release_job_result(job, result)
                 if not isinstance(exc, Exception):
                     raise
             else:
@@ -1222,7 +1279,7 @@ class AsyncScheduler:
                     started_at=start_time,
                     return_value=retval,
                 )
-                await self.data_store.release_job(self.identity, job, result)
+                await self._release_job_result(job, result)
             finally:
                 current_job.reset(token)
         finally:

@@ -52,6 +52,13 @@ class JobDeadlineMissed(Exception):
     """
 
 
+class JobTimedOutError(Exception):
+    """
+    Raised by :meth:`~Scheduler.get_job_result` if the job exceeded its configured
+    timeout.
+    """
+
+
 class ConflictingIdError(KeyError):
     """
     Raised when trying to add a schedule to a store that already contains a schedule by

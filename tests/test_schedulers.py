@@ -40,6 +40,7 @@ from apscheduler import (
     JobLookupError,
     JobOutcome,
     JobReleased,
+    JobTimedOutError,
     RunState,
     ScheduleAdded,
     ScheduleLookupError,
@@ -802,6 +803,96 @@ class TestAsyncScheduler:
             assert result.outcome is JobOutcome.error
             assert isinstance(result.exception, RuntimeError)
             assert str(result.exception) == "failing as requested"
+
+    async def test_job_timeout_async_executor(self) -> None:
+        send, receive = create_memory_object_stream[Event](4)
+        with send, receive:
+            async with AsyncScheduler() as scheduler:
+                scheduler.subscribe(send.send, {JobReleased})
+                job_id = await scheduler.add_job(
+                    dummy_async_job,
+                    kwargs={"delay": 10},
+                    timeout=0.05,
+                    result_expiration_time=5,
+                )
+                await scheduler.start_in_background()
+
+                with fail_after(3):
+                    event = await receive.receive()
+
+                assert isinstance(event, JobReleased)
+                assert event.job_id == job_id
+                assert event.outcome is JobOutcome.timeout
+
+                result = await scheduler.get_job_result(job_id)
+                assert result
+                assert result.outcome is JobOutcome.timeout
+
+                await sleep(0.1)
+                with pytest.raises(WouldBlock):
+                    receive.receive_nowait()
+
+    async def test_job_timeout_threadpool_executor(self) -> None:
+        send, receive = create_memory_object_stream[Event](4)
+        with send, receive:
+            async with AsyncScheduler() as scheduler:
+                scheduler.subscribe(send.send, {JobReleased})
+                job_id = await scheduler.add_job(
+                    dummy_sync_job,
+                    kwargs={"delay": 0.2},
+                    job_executor="threadpool",
+                    timeout=0.05,
+                    result_expiration_time=5,
+                )
+                await scheduler.start_in_background()
+
+                with fail_after(3):
+                    event = await receive.receive()
+
+                assert isinstance(event, JobReleased)
+                assert event.job_id == job_id
+                assert event.outcome is JobOutcome.timeout
+
+                result = await scheduler.get_job_result(job_id)
+                assert result
+                assert result.outcome is JobOutcome.timeout
+
+                # The thread was allowed to finish before finalization, and its late
+                # return value must not overwrite the timeout outcome.
+                with pytest.raises(WouldBlock):
+                    receive.receive_nowait()
+
+    async def test_run_job_timeout(self) -> None:
+        async with AsyncScheduler() as scheduler:
+            await scheduler.start_in_background()
+            with pytest.raises(JobTimedOutError):
+                await scheduler.run_job(
+                    dummy_async_job, kwargs={"delay": 10}, timeout=0.05
+                )
+
+    async def test_task_timeout_applies_to_scheduled_jobs(self) -> None:
+        send, receive = create_memory_object_stream[Event](4)
+        with send, receive:
+            async with AsyncScheduler() as scheduler:
+                await scheduler.configure_task(
+                    "timed_task", func=dummy_async_job, timeout=0.05
+                )
+                scheduler.subscribe(send.send, {JobReleased})
+                await scheduler.add_schedule(
+                    "timed_task",
+                    DateTrigger(datetime.now(UTC)),
+                    id="timed_schedule",
+                    kwargs={"delay": 10},
+                    job_result_expiration_time=5,
+                )
+                await scheduler.start_in_background()
+
+                with fail_after(3):
+                    event = await receive.receive()
+
+                assert isinstance(event, JobReleased)
+                assert event.schedule_id == "timed_schedule"
+                assert event.outcome is JobOutcome.timeout
 
     async def test_add_job_get_result_no_ready_yet(self) -> None:
         send, receive = create_memory_object_stream[Event](4)

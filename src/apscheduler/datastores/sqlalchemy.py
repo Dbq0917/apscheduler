@@ -339,6 +339,7 @@ class SQLAlchemyDataStore(BaseExternalDataStore):
             Column("job_executor", Unicode(500), nullable=False),
             Column("max_running_jobs", Integer),
             Column("misfire_grace_time", interval_type),
+            Column("timeout", interval_type),
             Column("metadata", json_type, nullable=False),
             Column("running_jobs", Integer, nullable=False, server_default=literal(0)),
         )
@@ -353,6 +354,7 @@ class SQLAlchemyDataStore(BaseExternalDataStore):
             Column("paused", Boolean, nullable=False, server_default=literal(False)),
             Column("coalesce", Enum(CoalescePolicy, metadata=metadata), nullable=False),
             Column("misfire_grace_time", interval_type),
+            Column("timeout", interval_type),
             Column("max_jitter", interval_type),
             Column("job_executor", Unicode(500), nullable=False),
             Column("job_result_expiration_time", interval_type),
@@ -375,6 +377,7 @@ class SQLAlchemyDataStore(BaseExternalDataStore):
             Column("jitter", interval_type),
             Column("start_deadline", timestamp_type),
             Column("result_expiration_time", interval_type),
+            Column("timeout", interval_type),
             Column("metadata", json_type, nullable=False),
             Column("created_at", timestamp_type, nullable=False, index=True),
             Column("acquired_by", Unicode(500), index=True),
@@ -490,6 +493,7 @@ class SQLAlchemyDataStore(BaseExternalDataStore):
             job_executor=task.job_executor,
             max_running_jobs=task.max_running_jobs,
             misfire_grace_time=task.misfire_grace_time,
+            timeout=task.timeout,
             metadata=task.metadata,
         )
         try:
@@ -505,6 +509,7 @@ class SQLAlchemyDataStore(BaseExternalDataStore):
                     job_executor=task.job_executor,
                     max_running_jobs=task.max_running_jobs,
                     misfire_grace_time=task.misfire_grace_time,
+                    timeout=task.timeout,
                     metadata=task.metadata,
                 )
                 .where(self._t_tasks.c.id == task.id)

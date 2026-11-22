@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import attrs
 from attr.setters import frozen
-from attrs.validators import and_, gt, instance_of, matches_re, min_len, optional
+from attrs.validators import and_, ge, gt, instance_of, matches_re, min_len, optional
 
 from ._converters import as_aware_datetime, as_enum, as_timedelta
 from ._enums import CoalescePolicy, JobOutcome
@@ -41,6 +41,8 @@ class Task:
     :var ~datetime.timedelta | None misfire_grace_time: maximum number of seconds the
         run time of jobs created for this task are allowed to be late, compared to the
         scheduled run time
+    :var ~datetime.timedelta | None timeout: maximum number of seconds a job created
+        for this task is allowed to run
     :var metadata: key-value pairs for storing JSON compatible custom information
     """
 
@@ -59,6 +61,12 @@ class Task:
         default=None,
         converter=as_timedelta,
         validator=optional(instance_of(timedelta)),
+        on_setattr=frozen,
+    )
+    timeout: timedelta | None = attrs.field(
+        default=None,
+        converter=as_timedelta,
+        validator=optional(and_(instance_of(timedelta), ge(timedelta()))),
         on_setattr=frozen,
     )
     metadata: MetadataType = attrs.field(validator=valid_metadata, factory=dict)
@@ -99,6 +107,8 @@ class TaskDefaults:
     :param ~datetime.timedelta | None misfire_grace_time: maximum number of seconds the
         run time of jobs created for this task are allowed to be late, compared to the
         scheduled run time
+    :param ~datetime.timedelta | None timeout: maximum number of seconds a job created
+        for this task is allowed to run
     :var metadata: key-value pairs for storing JSON compatible custom information
     """
 
@@ -112,6 +122,11 @@ class TaskDefaults:
         converter=as_timedelta,
         validator=optional(instance_of(timedelta)),
         default=None,
+    )
+    timeout: timedelta | None | UnsetValue = attrs.field(
+        converter=as_timedelta,
+        validator=if_not_unset(optional(and_(instance_of(timedelta), ge(timedelta())))),
+        default=unset,
     )
     metadata: MetadataType = attrs.field(validator=valid_metadata, factory=dict)
 
@@ -132,6 +147,8 @@ class Schedule:
     :var ~datetime.timedelta | None misfire_grace_time: maximum number of seconds the
         scheduled job's actual run time is allowed to be late, compared to the scheduled
         run time
+    :var ~datetime.timedelta | None timeout: maximum number of seconds jobs created
+        from this schedule are allowed to run
     :var ~datetime.timedelta | None max_jitter: maximum number of seconds to randomly
         add to the scheduled time for each job created from this schedule
     :var ~datetime.timedelta job_result_expiration_time: minimum time to keep the job
@@ -167,6 +184,12 @@ class Schedule:
         default=None,
         converter=as_timedelta,
         validator=optional(instance_of(timedelta)),
+        on_setattr=frozen,
+    )
+    timeout: timedelta | None = attrs.field(
+        default=None,
+        converter=as_timedelta,
+        validator=optional(and_(instance_of(timedelta), ge(timedelta()))),
         on_setattr=frozen,
     )
     max_jitter: timedelta | None = attrs.field(
@@ -277,6 +300,8 @@ class Job:
         scheduler after this time, it is considered to be misfired and will be aborted
     :var ~datetime.timedelta result_expiration_time: minimum amount of time to keep the
         result available for fetching in the data store
+    :var ~datetime.timedelta | None timeout: maximum amount of time the job is allowed
+        to run
     :var metadata: key-value pairs for storing JSON compatible custom information
     :var ~datetime.datetime created_at: the time at which the job was created
     :var str | None acquired_by: the unique identifier of the scheduler that has
@@ -306,6 +331,13 @@ class Job:
     )
     result_expiration_time: timedelta = attrs.field(
         converter=as_timedelta, default=timedelta(), repr=False, on_setattr=frozen
+    )
+    timeout: timedelta | None = attrs.field(
+        converter=as_timedelta,
+        default=None,
+        repr=False,
+        validator=optional(and_(instance_of(timedelta), ge(timedelta()))),
+        on_setattr=frozen,
     )
     metadata: MetadataType = attrs.field(validator=valid_metadata, factory=dict)
     created_at: datetime = attrs.field(

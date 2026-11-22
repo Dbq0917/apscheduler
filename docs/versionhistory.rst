@@ -6,6 +6,10 @@ APScheduler, see the :doc:`migration section <migration>`.
 
 **UNRELEASED**
 
+- Added a ``timeout`` option for tasks, schedules and jobs. Jobs that exceed their
+  timeout are cancelled and released with the new ``JobOutcome.timeout`` outcome;
+  finalization is shielded so a timeout or shutdown cannot leave a partially committed
+  job result behind
 - **BREAKING** Switched the MongoDB data store to use the asynchronous API in
   ``pymongo`` and bumped the minimum ``pymongo`` version to v4.13.0
 - Bumped up the CBOR serializer's ``cbor2`` dependency to v6.0+

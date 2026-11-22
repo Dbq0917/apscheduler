@@ -239,6 +239,7 @@ class Scheduler:
         job_executor: str | UnsetValue = unset,
         misfire_grace_time: float | timedelta | None | UnsetValue = unset,
         max_running_jobs: int | None | UnsetValue = unset,
+        timeout: float | timedelta | None | UnsetValue = unset,
         metadata: MetadataType | UnsetValue = unset,
     ) -> Task:
         portal = self._ensure_services_ready()
@@ -250,6 +251,7 @@ class Scheduler:
                 job_executor=job_executor,
                 misfire_grace_time=misfire_grace_time,
                 max_running_jobs=max_running_jobs,
+                timeout=timeout,
                 metadata=metadata,
             )
         )
@@ -270,6 +272,7 @@ class Scheduler:
         coalesce: CoalescePolicy = CoalescePolicy.latest,
         job_executor: str | UnsetValue = unset,
         misfire_grace_time: float | timedelta | None | UnsetValue = unset,
+        timeout: float | timedelta | None | UnsetValue = unset,
         metadata: MetadataType | UnsetValue = unset,
         max_jitter: float | timedelta | None = None,
         job_result_expiration_time: float | timedelta = 0,
@@ -288,6 +291,7 @@ class Scheduler:
                 job_executor=job_executor,
                 coalesce=coalesce,
                 misfire_grace_time=misfire_grace_time,
+                timeout=timeout,
                 max_jitter=max_jitter,
                 job_result_expiration_time=job_result_expiration_time,
                 metadata=metadata,
@@ -333,6 +337,7 @@ class Scheduler:
         args: Iterable[Any] | None = None,
         kwargs: Mapping[str, Any] | None = None,
         job_executor: str | UnsetValue = unset,
+        timeout: float | timedelta | None | UnsetValue = unset,
         metadata: MetadataType | UnsetValue = unset,
         result_expiration_time: timedelta | float = 0,
     ) -> UUID:
@@ -344,6 +349,7 @@ class Scheduler:
                 args=args,
                 kwargs=kwargs,
                 job_executor=job_executor,
+                timeout=timeout,
                 metadata=metadata,
                 result_expiration_time=result_expiration_time,
             )
@@ -366,6 +372,7 @@ class Scheduler:
         args: Iterable[Any] | None = None,
         kwargs: Mapping[str, Any] | None = None,
         job_executor: str | UnsetValue = unset,
+        timeout: float | timedelta | None | UnsetValue = unset,
         metadata: MetadataType | UnsetValue = unset,
     ) -> Any:
         portal = self._ensure_services_ready()
@@ -376,6 +383,7 @@ class Scheduler:
                 args=args,
                 kwargs=kwargs,
                 job_executor=job_executor,
+                timeout=timeout,
                 metadata=metadata,
             )
         )

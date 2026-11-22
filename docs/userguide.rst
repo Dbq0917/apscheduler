@@ -269,6 +269,28 @@ still running, the later job is terminated with the outcome of
 To allow more jobs to be concurrently running for a task, pass the desired maximum
 number as the ``max_running_jobs`` keyword argument to :meth:`~Scheduler.add_schedule`.
 
+Limiting job execution time
+---------------------------
+
+**Option**: ``timeout``
+
+The ``timeout`` option sets the maximum amount of time (in seconds, or as a
+``timedelta``) that a job may run. It can be configured on a task, a schedule, or an
+individual job, with the more specific setting taking precedence.
+
+When the timeout expires, the job is cancelled. If the callable returns a value after
+the cancellation was requested, that value is discarded and the job is released with
+the :attr:`~JobOutcome.timeout` outcome. The scheduler shields the job release from
+further cancellation so that a timeout or scheduler shutdown cannot interrupt the
+data store transaction that records the final outcome.
+
+.. note:: Asynchronous jobs can be interrupted at await points. A synchronous callable
+    running in a thread cannot be forcibly interrupted safely, so the thread pool
+    executor lets the current call finish before recording the timeout. This prevents a
+    late success from overwriting the timeout while an in-flight commit is still
+    running. For this reason, a timeout on a synchronous callable is a cancellation
+    request rather than a hard execution deadline.
+
 .. _controlling-how-much-a-job-can-be-started-late:
 
 Controlling how much a job can be started late

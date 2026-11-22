@@ -135,6 +135,36 @@ async def test_add_replace_task(datastore: DataStore) -> None:
     assert not events
 
 
+async def test_timeout_persistence(datastore: DataStore) -> None:
+    task = Task(
+        id="task1",
+        func="contextlib:asynccontextmanager",
+        job_executor="async",
+        timeout=30,
+    )
+    await datastore.add_task(task)
+    stored_task = await datastore.get_task(task.id)
+    assert stored_task.timeout == timedelta(seconds=30)
+
+    trigger = DateTrigger(datetime(2020, 9, 13, tzinfo=UTC))
+    schedule = Schedule(
+        id="schedule1",
+        task_id=task.id,
+        trigger=trigger,
+        job_executor="async",
+        timeout=20,
+    )
+    schedule.next_fire_time = trigger.next()
+    await datastore.add_schedule(schedule, ConflictPolicy.exception)
+    stored_schedule = (await datastore.get_schedules({schedule.id}))[0]
+    assert stored_schedule.timeout == timedelta(seconds=20)
+
+    job = Job(task_id=task.id, executor="async", timeout=10)
+    await datastore.add_job(job)
+    stored_job = (await datastore.get_jobs([job.id]))[0]
+    assert stored_job.timeout == timedelta(seconds=10)
+
+
 async def test_add_schedules(datastore: DataStore, schedules: list[Schedule]) -> None:
     async with capture_events(datastore, 3, {ScheduleAdded}) as events:
         for schedule in schedules:

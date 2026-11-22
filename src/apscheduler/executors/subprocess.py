@@ -6,8 +6,9 @@ from functools import partial
 from typing import Any
 
 import attrs
-from anyio import CapacityLimiter, to_process
+from anyio import CancelScope, CapacityLimiter, current_time, to_process
 
+from .._exceptions import JobTimedOutError
 from .._structures import Job
 from ..abc import JobExecutor
 
@@ -28,6 +29,19 @@ class ProcessPoolJobExecutor(JobExecutor):
 
     async def run_job(self, func: Callable[..., Any], job: Job) -> Any:
         wrapped = partial(func, *job.args, **job.kwargs)
-        return await to_process.run_sync(
-            wrapped, cancellable=True, limiter=self._limiter
-        )
+        if job.timeout is None:
+            return await to_process.run_sync(
+                wrapped, cancellable=True, limiter=self._limiter
+            )
+
+        # Let the process finish an in-flight commit instead of killing it as soon as
+        # the timeout expires. The timeout is reported once the callable returns.
+        with CancelScope(
+            deadline=current_time() + job.timeout.total_seconds()
+        ) as timeout_scope:
+            retval = await to_process.run_sync(wrapped, limiter=self._limiter)
+
+        if timeout_scope.cancel_called:
+            raise JobTimedOutError
+
+        return retval

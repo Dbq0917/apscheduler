@@ -77,6 +77,10 @@ class JobOutcome(Enum):
 
         the job's execution was cancelled
 
+    .. attribute:: timeout
+
+        the job's execution exceeded its configured timeout
+
     .. attribute:: abandoned
 
         the worker running the job stopped unexpectedly and the job was never marked
@@ -88,6 +92,7 @@ class JobOutcome(Enum):
     missed_start_deadline = auto()
     deserialization_failed = auto()
     cancelled = auto()
+    timeout = auto()
     abandoned = auto()
 
 

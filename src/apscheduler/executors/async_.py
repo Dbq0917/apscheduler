@@ -4,6 +4,9 @@ from collections.abc import Callable
 from inspect import isawaitable
 from typing import Any
 
+from anyio import CancelScope, current_time
+
+from .._exceptions import JobTimedOutError
 from .._structures import Job
 from ..abc import JobExecutor
 
@@ -17,8 +20,21 @@ class AsyncJobExecutor(JobExecutor):
     """
 
     async def run_job(self, func: Callable[..., Any], job: Job) -> Any:
-        retval = func(*job.args, **job.kwargs)
-        if isawaitable(retval):
-            retval = await retval
+        if job.timeout is None:
+            retval = func(*job.args, **job.kwargs)
+            if isawaitable(retval):
+                retval = await retval
+
+            return retval
+
+        with CancelScope(
+            deadline=current_time() + job.timeout.total_seconds()
+        ) as timeout_scope:
+            retval = func(*job.args, **job.kwargs)
+            if isawaitable(retval):
+                retval = await retval
+
+        if timeout_scope.cancel_called:
+            raise JobTimedOutError
 
         return retval

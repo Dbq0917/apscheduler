@@ -140,6 +140,7 @@ Exceptions
 .. autoexception:: apscheduler.JobResultNotReady
 .. autoexception:: apscheduler.JobCancelled
 .. autoexception:: apscheduler.JobDeadlineMissed
+.. autoexception:: apscheduler.JobTimedOutError
 .. autoexception:: apscheduler.ConflictingIdError
 .. autoexception:: apscheduler.SerializationError
 .. autoexception:: apscheduler.DeserializationError

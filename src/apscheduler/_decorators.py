@@ -31,6 +31,11 @@ class TaskParameters(TaskDefaults):
         validator=if_not_unset(optional(instance_of(timedelta))),
         default=unset,
     )
+    timeout: timedelta | None | UnsetValue = attrs.field(
+        converter=as_timedelta,
+        validator=if_not_unset(optional(instance_of(timedelta))),
+        default=unset,
+    )
     metadata: MetadataType | UnsetValue = attrs.field(
         validator=if_not_unset(valid_metadata), default=unset
     )
@@ -42,6 +47,7 @@ def task(
     job_executor: str | UnsetValue = unset,
     max_running_jobs: int | None | UnsetValue = unset,
     misfire_grace_time: int | timedelta | None | UnsetValue = unset,
+    timeout: int | timedelta | None | UnsetValue = unset,
     metadata: MetadataType | UnsetValue = unset,
 ) -> Callable[[T], T]:
     """
@@ -54,6 +60,8 @@ def task(
     :param ~datetime.timedelta | None misfire_grace_time: maximum number of seconds the
         run time of jobs created for the task are allowed to be late, compared to the
         scheduled run time
+    :param ~datetime.timedelta | None timeout: maximum number of seconds a job created
+        for this task is allowed to run
     :param metadata: key-value pairs for storing JSON compatible custom information
     """
 
@@ -74,6 +82,7 @@ def task(
                 job_executor=job_executor,
                 max_running_jobs=max_running_jobs,
                 misfire_grace_time=misfire_grace_time,
+                timeout=timeout,
                 metadata=metadata,
             ),
         )

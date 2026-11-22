@@ -8,9 +8,11 @@ from typing import Any, TypeVar
 
 import anyio
 import attrs
+from anyio import CancelScope, current_time
 from anyio.from_thread import BlockingPortal
 
 from apscheduler import Job, current_job
+from apscheduler._exceptions import JobTimedOutError
 from apscheduler.abc import JobExecutor
 
 if "PySide6" in sys.modules:
@@ -47,7 +49,17 @@ class QtJobExecutor(JobExecutor):
         future: Future[T_Retval] = Future()
         event = anyio.Event()
         self._signals.run_job.emit((func, job, future, event))
-        await event.wait()
+        if job.timeout is None:
+            await event.wait()
+        else:
+            with CancelScope(
+                deadline=current_time() + job.timeout.total_seconds()
+            ) as timeout_scope:
+                await event.wait()
+
+            if timeout_scope.cancel_called:
+                raise JobTimedOutError
+
         return future.result(0)
 
     def run_in_qt_thread(
