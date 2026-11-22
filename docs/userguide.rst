@@ -269,6 +269,13 @@ still running, the later job is terminated with the outcome of
 To allow more jobs to be concurrently running for a task, pass the desired maximum
 number as the ``max_running_jobs`` keyword argument to :meth:`~Scheduler.add_schedule`.
 
+.. note::
+
+    To prevent jobs from piling up in the data store when jobs finish at a slower rate
+    than the schedule fires, the scheduler will not add new jobs for a schedule while a
+    previously added job from the same schedule is still waiting to be run. The waiting
+    job is started as soon as a slot frees up, so the scheduled run is not lost.
+
 .. _controlling-how-much-a-job-can-be-started-late:
 
 Controlling how much a job can be started late

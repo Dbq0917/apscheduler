@@ -8,6 +8,9 @@ APScheduler, see the :doc:`migration section <migration>`.
 
 - **BREAKING** Switched the MongoDB data store to use the asynchronous API in
   ``pymongo`` and bumped the minimum ``pymongo`` version to v4.13.0
+- Fixed jobs piling up in the data store (consuming ever more memory) when a schedule
+  fired more frequently than its jobs finished running; the scheduler no longer adds
+  new jobs for a schedule while a previously added job is still waiting to be run
 - Bumped up the CBOR serializer's ``cbor2`` dependency to v6.0+
 - Dropped support for Python 3.9 and 3.10
 - Fixed an issue where ``CronTrigger`` does not convert ``start_time`` to ``self.timezone``

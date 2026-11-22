@@ -1030,6 +1030,51 @@ class TestAsyncScheduler:
                 await scheduler.add_job("dummyjob")
                 await scheduler.run_until_stopped()
 
+    async def test_schedule_fires_faster_than_jobs_complete(
+        self, raw_datastore: DataStore
+    ) -> None:
+        """
+        Test that jobs don't pile up in the data store when the schedule fires more
+        frequently than the jobs finish running.
+
+        """
+        jobs_completed = 0
+
+        async def slow_job() -> None:
+            nonlocal jobs_completed
+            await sleep(0.5)
+            jobs_completed += 1
+
+        send, receive = create_memory_object_stream[Event](20)
+        with send, receive:
+            async with AsyncScheduler(data_store=raw_datastore) as scheduler:
+                await scheduler.configure_task("slow_job", func=slow_job)
+                await scheduler.add_schedule(
+                    "slow_job", IntervalTrigger(seconds=0.2), id="foo"
+                )
+                scheduler.subscribe(send.send, {JobAdded, JobReleased})
+                await scheduler.start_in_background()
+
+                # Wait for three jobs to complete (the schedule fires about 8 times
+                # during this period)
+                jobs_added = 0
+                with fail_after(10):
+                    while jobs_completed < 3:
+                        event = await receive.receive()
+                        if isinstance(event, JobAdded):
+                            jobs_added += 1
+                        elif isinstance(event, JobReleased):
+                            assert event.outcome is JobOutcome.success
+
+                # Only one job should be queued up while another is running, so
+                # fewer jobs should have been added than the number of times the
+                # schedule fired
+                assert jobs_added <= jobs_completed + 2
+
+                # At most one job should be waiting to run, plus one running
+                jobs = await scheduler.get_jobs()
+                assert len(jobs) <= 2
+
     @pytest.mark.parametrize(
         "trigger_type, run_job",
         [

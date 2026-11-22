@@ -966,6 +966,16 @@ class AsyncScheduler:
 
                     now = datetime.now(UTC)
                     results: list[ScheduleResult] = []
+
+                    # Find out which schedules still have jobs waiting to be run, to
+                    # avoid piling up jobs in the data store when jobs are completed
+                    # at a slower rate than new ones are being scheduled
+                    waiting_schedule_ids = {
+                        job.schedule_id
+                        for job in await self.data_store.get_jobs()
+                        if job.schedule_id is not None
+                        and (job.acquired_until is None or job.acquired_until <= now)
+                    }
                     for schedule in schedules:
                         # Calculate a next fire time for the schedule, if possible
                         fire_times = [schedule.next_fire_time]
@@ -994,58 +1004,72 @@ class AsyncScheduler:
                             elif schedule.coalesce is CoalescePolicy.latest:
                                 fire_times[0] = fire_time
 
-                        # Add one or more jobs to the job queue
-                        max_jitter = (
-                            schedule.max_jitter.total_seconds()
-                            if schedule.max_jitter
-                            else 0
-                        )
-                        for i, fire_time in enumerate(fire_times):
-                            # Calculate a jitter if max_jitter > 0
-                            jitter = _zero_timedelta
-                            if max_jitter:
-                                if i + 1 < len(fire_times):
-                                    following_fire_time = fire_times[i + 1]
-                                else:
-                                    following_fire_time = next_fire_time
+                        if schedule.id in waiting_schedule_ids:
+                            # Skip adding jobs while a previously added job is still
+                            # waiting to be run (it will be run as soon as a slot
+                            # frees up, so the scheduled run is not lost)
+                            self.logger.debug(
+                                "Not adding jobs for schedule %r of task %r because "
+                                "a previously added job is still waiting to run",
+                                schedule.id,
+                                schedule.task_id,
+                            )
+                        else:
+                            # Add one or more jobs to the job queue
+                            max_jitter = (
+                                schedule.max_jitter.total_seconds()
+                                if schedule.max_jitter
+                                else 0
+                            )
+                            for i, fire_time in enumerate(fire_times):
+                                # Calculate a jitter if max_jitter > 0
+                                jitter = _zero_timedelta
+                                if max_jitter:
+                                    if i + 1 < len(fire_times):
+                                        following_fire_time = fire_times[i + 1]
+                                    else:
+                                        following_fire_time = next_fire_time
 
-                                if following_fire_time is not None:
-                                    # Jitter must never be so high that it would cause a
-                                    # fire time to equal or exceed the next fire time
-                                    max_jitter = min(
-                                        [
-                                            max_jitter,
-                                            (
-                                                following_fire_time
-                                                - fire_time
-                                                - _microsecond_delta
-                                            ).total_seconds(),
-                                        ]
+                                    if following_fire_time is not None:
+                                        # Jitter must never be so high that it would
+                                        # cause a fire time to equal or exceed the
+                                        # next fire time
+                                        max_jitter = min(
+                                            [
+                                                max_jitter,
+                                                (
+                                                    following_fire_time
+                                                    - fire_time
+                                                    - _microsecond_delta
+                                                ).total_seconds(),
+                                            ]
+                                        )
+
+                                    jitter = timedelta(
+                                        seconds=random.uniform(0, max_jitter)
+                                    )
+                                    fire_time += jitter
+
+                                if schedule.misfire_grace_time is None:
+                                    start_deadline: datetime | None = None
+                                else:
+                                    start_deadline = (
+                                        fire_time + schedule.misfire_grace_time
                                     )
 
-                                jitter = timedelta(
-                                    seconds=random.uniform(0, max_jitter)
+                                job = Job(
+                                    task_id=schedule.task_id,
+                                    args=schedule.args,
+                                    kwargs=schedule.kwargs,
+                                    schedule_id=schedule.id,
+                                    scheduled_fire_time=fire_time,
+                                    jitter=jitter,
+                                    start_deadline=start_deadline,
+                                    executor=schedule.job_executor,
+                                    result_expiration_time=schedule.job_result_expiration_time,
+                                    metadata=schedule.metadata.copy(),
                                 )
-                                fire_time += jitter
-
-                            if schedule.misfire_grace_time is None:
-                                start_deadline: datetime | None = None
-                            else:
-                                start_deadline = fire_time + schedule.misfire_grace_time
-
-                            job = Job(
-                                task_id=schedule.task_id,
-                                args=schedule.args,
-                                kwargs=schedule.kwargs,
-                                schedule_id=schedule.id,
-                                scheduled_fire_time=fire_time,
-                                jitter=jitter,
-                                start_deadline=start_deadline,
-                                executor=schedule.job_executor,
-                                result_expiration_time=schedule.job_result_expiration_time,
-                                metadata=schedule.metadata.copy(),
-                            )
-                            await self.data_store.add_job(job)
+                                await self.data_store.add_job(job)
 
                         results.append(
                             ScheduleResult(
